@@ -53,6 +53,7 @@ static id disconnectObserver = nil;
 
 #if !TARGET_OS_TV
 static const char *accelerometerName = "iOS Accelerometer";
+static const char *attitudeName = "iOS Attitude";
 static CMMotionManager *motionManager = nil;
 #endif /* !TARGET_OS_TV */
 
@@ -157,7 +158,7 @@ SDL_SYS_AddMFIJoystickDevice(SDL_JoystickDeviceItem *device, GCController *contr
 }
 
 static void
-SDL_SYS_AddJoystickDevice(GCController *controller, SDL_bool accelerometer)
+SDL_SYS_AddJoystickDevice(GCController *controller, joystick_hwmotion motion)
 {
     SDL_JoystickDeviceItem *device = deviceList;
 
@@ -171,7 +172,7 @@ SDL_SYS_AddJoystickDevice(GCController *controller, SDL_bool accelerometer)
 #endif
 
     while (device != NULL) {
-        if (device->controller == controller) {
+        if (device->controller && device->controller == controller) {
             return;
         }
         device = device->next;
@@ -182,21 +183,31 @@ SDL_SYS_AddJoystickDevice(GCController *controller, SDL_bool accelerometer)
         return;
     }
 
-    device->accelerometer = accelerometer;
+    device->motion = motion;
     device->instance_id = instancecounter++;
 
-    if (accelerometer) {
+    if (motion) {
 #if TARGET_OS_TV
         SDL_free(device);
         return;
 #else
-        device->name = SDL_strdup(accelerometerName);
-        device->naxes = 3; /* Device acceleration in the x, y, and z axes. */
-        device->nhats = 0;
-        device->nbuttons = 0;
+        if (motion == attitude) {
+            device->name = SDL_strdup(attitudeName);
+            device->naxes = 3; /* Device acceleration in the x, y, and z axes. */
+            device->nhats = 0;
+            device->nbuttons = 0;
 
-        /* Use the accelerometer name as a GUID. */
-        SDL_memcpy(&device->guid.data, device->name, SDL_min(sizeof(SDL_JoystickGUID), SDL_strlen(device->name)));
+            /* Use the attitude name as a GUID. */
+            SDL_memcpy(&device->guid.data, device->name, SDL_min(sizeof(SDL_JoystickGUID), SDL_strlen(device->name)));
+        } else { /* accelerometer */
+            device->name = SDL_strdup(accelerometerName);
+            device->naxes = 3; /* Device acceleration in the x, y, and z axes. */
+            device->nhats = 0;
+            device->nbuttons = 0;
+
+            /* Use the accelerometer name as a GUID. */
+            SDL_memcpy(&device->guid.data, device->name, SDL_min(sizeof(SDL_JoystickGUID), SDL_strlen(device->name)));
+        }
 #endif /* TARGET_OS_TV */
     } else if (controller) {
         SDL_SYS_AddMFIJoystickDevice(device, controller);
@@ -347,7 +358,11 @@ SDL_SYS_JoystickInit(void)
 #if !TARGET_OS_TV
         if (SDL_GetHintBoolean(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, SDL_TRUE)) {
             /* Default behavior, accelerometer as joystick */
-            SDL_SYS_AddJoystickDevice(nil, SDL_TRUE);
+            SDL_SYS_AddJoystickDevice(nil, accelerometer);
+        }
+        if (SDL_GetHintBoolean(SDL_HINT_ATTITUDE_AS_JOYSTICK, SDL_TRUE)) {
+            /* Default behavior, attitude as joystick */
+            SDL_SYS_AddJoystickDevice(nil, attitude);
         }
 #endif /* !TARGET_OS_TV */
 
@@ -358,7 +373,7 @@ SDL_SYS_JoystickInit(void)
         }
 
         for (GCController *controller in [GCController controllers]) {
-            SDL_SYS_AddJoystickDevice(controller, SDL_FALSE);
+            SDL_SYS_AddJoystickDevice(controller, other);
         }
 
 #if TARGET_OS_TV
@@ -371,7 +386,7 @@ SDL_SYS_JoystickInit(void)
                                                queue:nil
                                           usingBlock:^(NSNotification *note) {
                                               GCController *controller = note.object;
-                                              SDL_SYS_AddJoystickDevice(controller, SDL_FALSE);
+                                              SDL_SYS_AddJoystickDevice(controller, other);
                                           }];
 
         disconnectObserver = [center addObserverForName:GCControllerDidDisconnectNotification
@@ -445,15 +460,20 @@ SDL_SYS_JoystickOpen(SDL_Joystick * joystick, int device_index)
     device->joystick = joystick;
 
     @autoreleasepool {
-        if (device->accelerometer) {
+        if (device->motion) {
 #if !TARGET_OS_TV
             if (motionManager == nil) {
                 motionManager = [[CMMotionManager alloc] init];
             }
 
-            /* Shorter times between updates can significantly increase CPU usage. */
-            motionManager.accelerometerUpdateInterval = 0.1;
-            [motionManager startAccelerometerUpdates];
+            if (device->motion == attitude) {
+                motionManager.deviceMotionUpdateInterval = 1.0 / 60.0;
+                [motionManager startDeviceMotionUpdates];
+            } else { /* accelerometer */
+                /* Shorter times between updates can significantly increase CPU usage. */
+                motionManager.accelerometerUpdateInterval = 0.1;
+                [motionManager startAccelerometerUpdates];
+            }
 #endif /* !TARGET_OS_TV */
         } else {
 #ifdef SDL_JOYSTICK_MFI
@@ -521,6 +541,28 @@ SDL_SYS_AccelerometerUpdate(SDL_Joystick * joystick)
     SDL_PrivateJoystickAxis(joystick, 0,  (accel.x / maxgforce) * maxsint16);
     SDL_PrivateJoystickAxis(joystick, 1, -(accel.y / maxgforce) * maxsint16);
     SDL_PrivateJoystickAxis(joystick, 2,  (accel.z / maxgforce) * maxsint16);
+#endif /* !TARGET_OS_TV */
+}
+
+static void
+SDL_SYS_AttitudeUpdate(SDL_Joystick * joystick)
+{
+#if !TARGET_OS_TV
+    const SInt16 maxsint16 = 0x7FFF;
+    CMAttitude *attitude;
+
+    @autoreleasepool {
+        if (!motionManager.isDeviceMotionActive || !motionManager.deviceMotion) {
+            return;
+        }
+
+        attitude = motionManager.deviceMotion.attitude;
+    }
+
+    /* pass in data mapped to range of SInt16 */
+    SDL_PrivateJoystickAxis(joystick, 0, attitude.yaw / M_PI * maxsint16);
+    SDL_PrivateJoystickAxis(joystick, 1, attitude.pitch / M_PI * maxsint16);
+    SDL_PrivateJoystickAxis(joystick, 2, attitude.roll / M_PI * maxsint16);
 #endif /* !TARGET_OS_TV */
 }
 
@@ -697,8 +739,12 @@ SDL_SYS_JoystickUpdate(SDL_Joystick * joystick)
         return;
     }
 
-    if (device->accelerometer) {
-        SDL_SYS_AccelerometerUpdate(joystick);
+    if (device->motion) {
+        if (device->motion == attitude) {
+            SDL_SYS_AttitudeUpdate(joystick);
+        } else {
+            SDL_SYS_AccelerometerUpdate(joystick);
+        }
     } else if (device->controller) {
         SDL_SYS_MFIJoystickUpdate(joystick);
     }
@@ -717,9 +763,13 @@ SDL_SYS_JoystickClose(SDL_Joystick * joystick)
     device->joystick = NULL;
 
     @autoreleasepool {
-        if (device->accelerometer) {
+        if (device->motion) {
 #if !TARGET_OS_TV
-            [motionManager stopAccelerometerUpdates];
+            if (device->motion == attitude) {
+                [motionManager stopDeviceMotionUpdates];
+            } else {
+                [motionManager stopAccelerometerUpdates];
+            }
 #endif /* !TARGET_OS_TV */
         } else if (device->controller) {
 #ifdef SDL_JOYSTICK_MFI

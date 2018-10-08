@@ -28,9 +28,15 @@
 
 @class GCController;
 
+typedef enum joystick_hwmotion {
+    other = 0,
+    accelerometer,
+    attitude
+} joystick_hwmotion;
+
 typedef struct joystick_hwdata
 {
-    SDL_bool accelerometer;
+    joystick_hwmotion motion;
     SDL_bool remote;
 
     GCController __unsafe_unretained *controller;

@@ -136,7 +136,7 @@
 /* Use 8-byte alignment on 64-bit architectures, so pointers are aligned */
 #pragma pack(push,8)
 #else
-#pragma pack(push,4)
+//#pragma pack(push,4)
 #endif
 #elif (defined(__MWERKS__) && defined(__MACOS__))
 #pragma options align=mac68k4byte

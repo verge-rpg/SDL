@@ -40,7 +40,7 @@
 #pragma options align=reset
 #pragma enumsalwaysint reset
 #else
-#pragma pack(pop)
+//#pragma pack(pop)
 #endif
 #endif /* Compiler needs structure packing set */
 

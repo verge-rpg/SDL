@@ -1719,7 +1719,7 @@ void SDL_WM_SetCaption (const char *title, const char *icon)
 	}
 
 	/* PulseAudio can make use of this information. */
-	SDL_Audio_SetCaption(title);
+	//SDL_Audio_SetCaption(title);
 }
 
 void SDL_WM_GetCaption (char **title, char **icon)
